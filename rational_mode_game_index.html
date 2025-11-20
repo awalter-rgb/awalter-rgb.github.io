@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rational Number Mode Game</title>
+    <!-- Tailwind via CDN for quick styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4">
+    <div id="root" class="w-full"></div>
+
+    <!-- React & ReactDOM via CDN -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+
+    <!-- Babel so we can write JSX directly in this file -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Game code -->
+    <script type="text/babel">
+      const { useState, useEffect } = React;
+
+      function randomIntInclusive(min, max) {
+        const low = Math.ceil(min);
+        const high = Math.floor(max);
+        return Math.floor(Math.random() * (high - low + 1)) + low;
+      }
+
+      function randomChoice(arr) {
+        return arr[Math.floor(Math.random() * arr.length)];
+      }
+
+      function gcd(a, b) {
+        a = Math.abs(a);
+        b = Math.abs(b);
+        while (b !== 0) {
+          const t = a % b;
+          a = b;
+          b = t;
+        }
+        return a || 1;
+      }
+
+      function lcm(a, b) {
+        return Math.abs(a * b) / gcd(a, b);
+      }
+
+      const MODES = [
+        {
+          id: "greater",
+          name: "Greater",
+          description: "The larger number wins.",
+          rule: "Choose the number with the greater value.",
+        },
+        {
+          id: "lesser",
+          name: "Lesser",
+          description: "The smaller number wins.",
+          rule: "Choose the number with the lesser value.",
+        },
+        {
+          id: "greaterAbs",
+          name: "Greater Absolute",
+          description: "The number with the larger absolute value wins.",
+          rule: "Choose the number whose distance from 0 is greater.",
+        },
+        {
+          id: "lesserAbs",
+          name: "Lesser Absolute",
+          description: "The number with the smaller absolute value wins.",
+          rule: "Choose the number whose distance from 0 is smaller.",
+        },
+      ];
+
+      function getRandomMode() {
+        return MODES[Math.floor(Math.random() * MODES.length)];
+      }
+
+      function createDecimalRational() {
+        const sign = Math.random() < 0.5 ? -1 : 1;
+        const whole = randomIntInclusive(0, 9);
+        const decimalParts = [0, 0.25, 0.5, 0.75];
+        const decimal = randomChoice(decimalParts);
+        const raw = whole + decimal;
+        const value = sign * raw;
+        const normalized = value === 0 ? 0 : value;
+        return {
+          display: normalized.toFixed(2),
+          value: normalized,
+          denomHint: 4,
+        };
+      }
+
+      function createFractionRational() {
+        const denominators = [2, 3, 4, 5, 6, 8, 10];
+        const denom = randomChoice(denominators);
+        const numer = randomIntInclusive(1, denom - 1);
+        const sign = Math.random() < 0.5 ? -1 : 1;
+        const value = sign * (numer / denom);
+        const prefix = sign === -1 ? "-" : "";
+        return {
+          display: `${prefix}${numer}/${denom}`,
+          value,
+          denomHint: denom,
+        };
+      }
+
+      function createMixedRational() {
+        const denominators = [2, 3, 4, 5, 6, 8];
+        const whole = randomIntInclusive(1, 5);
+        const denom = randomChoice(denominators);
+        const numer = randomIntInclusive(1, denom - 1);
+        const sign = Math.random() < 0.5 ? -1 : 1;
+        const value = sign * (whole + numer / denom);
+        const wholePart = sign === -1 ? `-${whole}` : `${whole}`;
+        return {
+          display: `${wholePart} ${numer}/${denom}`,
+          value,
+          denomHint: denom,
+        };
+      }
+
+      function getRandomRational() {
+        const type = randomIntInclusive(0, 2); // 0 = decimal, 1 = fraction, 2 = mixed
+        if (type === 0) return createDecimalRational();
+        if (type === 1) return createFractionRational();
+        return createMixedRational();
+      }
+
+      function getWinnerIndex(mode, left, right) {
+        const v1 = left.value;
+        const v2 = right.value;
+        const a1 = Math.abs(v1);
+        const a2 = Math.abs(v2);
+
+        switch (mode.id) {
+          case "greater":
+            if (v1 > v2) return 0;
+            if (v2 > v1) return 1;
+            return null;
+          case "lesser":
+            if (v1 < v2) return 0;
+            if (v2 < v1) return 1;
+            return null;
+          case "greaterAbs":
+            if (a1 > a2) return 0;
+            if (a2 > a1) return 1;
+            return null;
+          case "lesserAbs":
+            if (a1 < a2) return 0;
+            if (a2 < a1) return 1;
+            return null;
+          default:
+            return null;
+        }
+      }
+
+      function getPositionPercent(value, min, max) {
+        if (max === min) return 50;
+        const t = (value - min) / (max - min); // 0 to 1
+        return 5 + t * 90; // padding
+      }
+
+      function TwoPlayerModeNumberGame() {
+        const [currentMode, setCurrentMode] = useState(null);
+        const [leftNumber, setLeftNumber] = useState(null);
+        const [rightNumber, setRightNumber] = useState(null);
+        const [selectedIndex, setSelectedIndex] = useState(null);
+
+        const hasRound = !!(currentMode && leftNumber && rightNumber);
+
+        const startRound = () => {
+          let mode;
+          let n1;
+          let n2;
+          let winner = null;
+          let safety = 0;
+
+          // Guarantee no ties, even in absolute-value modes
+          do {
+            mode = getRandomMode();
+            n1 = getRandomRational();
+            n2 = getRandomRational();
+            winner = getWinnerIndex(mode, n1, n2);
+            safety += 1;
+          } while (winner === null && safety < 100);
+
+          setCurrentMode(mode);
+          setLeftNumber(n1);
+          setRightNumber(n2);
+          setSelectedIndex(null);
+        };
+
+        useEffect(() => {
+          startRound();
+        }, []);
+
+        const winnerIndex =
+          hasRound && currentMode && leftNumber && rightNumber
+            ? getWinnerIndex(currentMode, leftNumber, rightNumber)
+            : null;
+
+        const handlePick = (index) => {
+          if (!hasRound) return;
+          setSelectedIndex(index);
+        };
+
+        const baseCardClasses =
+          "rounded-2xl border px-4 py-10 md:py-16 text-center text-5xl md:text-6xl font-semibold flex items-center justify-center select-none transition-transform bg-slate-900/70 border-slate-700 hover:scale-105 focus:outline-none focus:ring-4 focus:ring-indigo-500/60";
+
+        const getCardStyle = (index) => {
+          let backgroundColor;
+          let borderColor;
+          let opacity = 1;
+
+          if (selectedIndex === null || winnerIndex === null) {
+            return { backgroundColor, borderColor, opacity };
+          }
+
+          if (selectedIndex === index) {
+            if (winnerIndex === index) {
+              backgroundColor = "#16a34a";
+              borderColor = "#4ade80";
+            } else {
+              backgroundColor = "#dc2626";
+              borderColor = "#f87171";
+            }
+            return { backgroundColor, borderColor, opacity, color: "#ffffff" };
+          }
+
+          if (winnerIndex === index) {
+            borderColor = "#4ade80";
+          } else {
+            opacity = 0.7;
+          }
+
+          return { backgroundColor, borderColor, opacity };
+        };
+
+        const isAbsMode =
+          currentMode && (currentMode.id === "greaterAbs" || currentMode.id === "lesserAbs");
+
+        let leftPlot = null;
+        let rightPlot = null;
+        let domainMin = null;
+        let domainMax = null;
+        let ticks = [];
+
+        if (leftNumber && rightNumber) {
+          leftPlot = isAbsMode ? Math.abs(leftNumber.value) : leftNumber.value;
+          rightPlot = isAbsMode ? Math.abs(rightNumber.value) : rightNumber.value;
+
+          const minVal = Math.min(leftPlot, rightPlot);
+          const maxVal = Math.max(leftPlot, rightPlot);
+
+          let minInt = Math.floor(minVal);
+          let maxInt = Math.ceil(maxVal);
+          if (minInt === maxInt) {
+            minInt -= 1;
+            maxInt += 1;
+          }
+
+          domainMin = minInt;
+          domainMax = maxInt;
+
+          const leftDenom = leftNumber.denomHint || 1;
+          const rightDenom = rightNumber.denomHint || 1;
+          const stepDenom = lcm(leftDenom, rightDenom);
+          const step = 1 / stepDenom;
+
+          const tickValues = [];
+          const startN = Math.round(domainMin * stepDenom);
+          const endN = Math.round(domainMax * stepDenom);
+
+          for (let n = startN; n <= endN; n++) {
+            tickValues.push(n / stepDenom);
+          }
+
+          ticks = tickValues.map((v) => ({
+            value: v,
+            isMajor: Math.abs(v - Math.round(v)) < 1e-6,
+          }));
+        }
+
+        return (
+          <div className="w-full max-w-6xl flex flex-col items-center gap-12">
+            <div className="text-4xl md:text-7xl font-bold tracking-tight text-center select-none">
+              {currentMode ? currentMode.name : ""}
+            </div>
+
+            <div className="flex flex-col md:flex-row gap-10 w-full max-w-5xl">
+              <div className="flex-1 flex flex-col items-center gap-2">
+                <div className="text-xl md:text-2xl font-bold select-none">A</div>
+                <button
+                  type="button"
+                  onClick={() => handlePick(0)}
+                  className={baseCardClasses}
+                  style={getCardStyle(0)}
+                >
+                  {leftNumber ? leftNumber.display : ""}
+                </button>
+              </div>
+
+              <div className="flex-1 flex flex-col items-center gap-2">
+                <div className="text-xl md:text-2xl font-bold select-none">B</div>
+                <button
+                  type="button"
+                  onClick={() => handlePick(1)}
+                  className={baseCardClasses}
+                  style={getCardStyle(1)}
+                >
+                  {rightNumber ? rightNumber.display : ""}
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={startRound}
+              className="mt-2 inline-flex items-center justify-center rounded-2xl px-10 py-4 text-2xl font-semibold bg-indigo-500 hover:bg-indigo-400 active:bg-indigo-600 transition focus:outline-none focus:ring-4 focus:ring-indigo-500/70"
+            >
+              New Round
+            </button>
+
+            {hasRound &&
+              selectedIndex !== null &&
+              leftNumber &&
+              rightNumber &&
+              leftPlot !== null &&
+              rightPlot !== null &&
+              domainMin !== null &&
+              domainMax !== null && (
+                <div className="w-full max-w-5xl mt-8">
+                  <div className="relative h-48">
+                    <div className="absolute left-[5%] right-[5%] top-1/2 h-2 bg-slate-600 -translate-y-1/2 rounded" />
+
+                    <div className="absolute left-[5%] right-[5%] top-[62%] flex justify-between text-base md:text-xl text-slate-300 select-none">
+                      {ticks.map((tick) => {
+                        const isInt = tick.isMajor;
+                        const label = isInt ? Math.round(tick.value) : null;
+                        return (
+                          <div
+                            key={tick.value.toFixed(4)}
+                            className="flex flex-col items-center"
+                          >
+                            <div
+                              className={
+                                isInt
+                                  ? "w-px h-6 bg-slate-100 mb-1"
+                                  : "w-px h-3 bg-slate-400 mb-1"
+                              }
+                            />
+                            <span
+                              className={isInt ? "text-sm md:text-base" : "hidden"}
+                            >
+                              {label}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div
+                      className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center"
+                      style={{
+                        left: `${getPositionPercent(
+                          leftPlot,
+                          domainMin,
+                          domainMax
+                        )}%`,
+                        top: "40%",
+                      }}
+                    >
+                      <div className="w-7 h-7 rounded-full bg-sky-300 shadow-lg flex items-center justify-center text-xs font-bold text-slate-900">
+                        A
+                      </div>
+                      <span className="text-sm md:text-lg mt-2 select-none">
+                        {leftNumber.display}
+                      </span>
+                    </div>
+
+                    <div
+                      className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center"
+                      style={{
+                        left: `${getPositionPercent(
+                          rightPlot,
+                          domainMin,
+                          domainMax
+                        )}%`,
+                        top: "40%",
+                      }}
+                    >
+                      <div className="w-7 h-7 rounded-full bg-emerald-300 shadow-lg flex items-center justify-center text-xs font-bold text-slate-900">
+                        B
+                      </div>
+                      <span className="text-sm md:text-lg mt-2 select-none">
+                        {rightNumber.display}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+          </div>
+        );
+      }
+
+      const root = ReactDOM.createRoot(document.getElementById("root"));
+      root.render(<TwoPlayerModeNumberGame />);
+    </script>
+  </body>
+</html>
