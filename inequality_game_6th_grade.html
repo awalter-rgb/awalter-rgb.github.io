@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Inequality Challenge Game</title>
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      margin: 0;
+      background: #f3f5ff;
+      color: #1f2933;
+    }
+
+    .game-container {
+      max-width: 900px;
+      margin: 2rem auto;
+      padding: 1.5rem 1.25rem 2.5rem;
+      background: #ffffff;
+      border-radius: 1.25rem;
+      box-shadow: 0 12px 35px rgba(15, 23, 42, 0.12);
+    }
+
+    h1 {
+      text-align: center;
+      margin-top: 0;
+      margin-bottom: 0.3rem;
+      font-size: 2rem;
+    }
+
+    .subtitle {
+      text-align: center;
+      margin-top: 0;
+      margin-bottom: 1.5rem;
+      color: #4b5563;
+      font-size: 0.98rem;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      gap: 0.75rem 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .controls h2 {
+      margin: 0;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    .difficulty-buttons {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .difficulty-button {
+      border-radius: 999px;
+      border: 1px solid #d1d5db;
+      background: #f9fafb;
+      padding: 0.4rem 1.1rem;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s, box-shadow 0.15s, border-color 0.15s;
+    }
+
+    .difficulty-button:hover {
+      background: #e5edff;
+      box-shadow: 0 3px 10px rgba(59, 130, 246, 0.25);
+      transform: translateY(-1px);
+    }
+
+    .difficulty-button.active {
+      background: #2563eb;
+      color: #ffffff;
+      border-color: #2563eb;
+      box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35);
+    }
+
+    .problem-card {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+      gap: 1rem;
+      align-items: center;
+      justify-items: center;
+      padding: 1.25rem;
+      margin-bottom: 1rem;
+      border-radius: 1rem;
+      background: linear-gradient(135deg, #eff6ff, #fdf2ff);
+      border: 1px solid #e5e7eb;
+    }
+
+    .number-display {
+      font-size: 2.1rem;
+      font-weight: 600;
+      padding: 0.7rem 1.25rem;
+      border-radius: 0.85rem;
+      background: #ffffff;
+      box-shadow: inset 0 0 0 1px rgba(209, 213, 219, 0.8);
+      min-width: 130px;
+      text-align: center;
+    }
+
+    .inequality-choices {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      align-items: center;
+    }
+
+    .ineq-button {
+      width: 56px;
+      height: 40px;
+      border-radius: 999px;
+      border: 1px solid #d1d5db;
+      background: #ffffff;
+      font-size: 1.4rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.12s, transform 0.09s, box-shadow 0.12s, border-color 0.12s;
+    }
+
+    .ineq-button:hover {
+      background: #e5edff;
+      box-shadow: 0 3px 9px rgba(37, 99, 235, 0.3);
+      transform: translateY(-1px);
+    }
+
+    .ineq-button.selected {
+      background: #2563eb;
+      color: #ffffff;
+      border-color: #1d4ed8;
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.45);
+      transform: translateY(-1px);
+    }
+
+    .ineq-button:disabled {
+      opacity: 0.6;
+      cursor: default;
+      box-shadow: none;
+      transform: none;
+    }
+
+    .current-selection {
+      text-align: center;
+      margin-bottom: 0.75rem;
+      font-size: 1rem;
+    }
+
+    #current-symbol {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 999px;
+      border: 1px dashed #9ca3af;
+      margin-left: 0.25rem;
+      font-weight: 600;
+      font-size: 1.1rem;
+    }
+
+    .actions {
+      display: flex;
+      justify-content: center;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    #check-button,
+    #next-button {
+      border-radius: 999px;
+      border: none;
+      padding: 0.6rem 1.4rem;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, box-shadow 0.15s, transform 0.09s, opacity 0.1s;
+    }
+
+    #check-button {
+      background: #16a34a;
+      color: #ffffff;
+      box-shadow: 0 4px 12px rgba(22, 163, 74, 0.35);
+    }
+
+    #check-button:hover:not(:disabled) {
+      background: #15803d;
+      box-shadow: 0 6px 14px rgba(21, 128, 61, 0.5);
+      transform: translateY(-1px);
+    }
+
+    #next-button {
+      background: #e5e7eb;
+      color: #111827;
+    }
+
+    #next-button:hover:not(:disabled) {
+      background: #d1d5db;
+      box-shadow: 0 3px 10px rgba(55, 65, 81, 0.25);
+      transform: translateY(-1px);
+    }
+
+    #check-button:disabled,
+    #next-button:disabled {
+      opacity: 0.55;
+      cursor: default;
+      box-shadow: none;
+      transform: none;
+    }
+
+    .feedback {
+      min-height: 1.5em;
+      text-align: center;
+      font-size: 0.98rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .feedback.correct {
+      color: #166534;
+      font-weight: 600;
+    }
+
+    .feedback.incorrect {
+      color: #b91c1c;
+      font-weight: 600;
+    }
+
+    .feedback.try-again {
+      color: #92400e;
+      font-weight: 500;
+    }
+
+    .feedback.reminder {
+      color: #4338ca;
+    }
+
+    .scoreboard {
+      text-align: center;
+      font-size: 0.95rem;
+      margin-bottom: 0.75rem;
+      color: #4b5563;
+    }
+
+    .tip {
+      text-align: center;
+      font-size: 0.9rem;
+      color: #6b7280;
+      max-width: 580px;
+      margin: 0.25rem auto 0;
+    }
+
+    @media (max-width: 700px) {
+      .problem-card {
+        grid-template-columns: 1fr;
+      }
+
+      .inequality-choices {
+        flex-direction: row;
+      }
+
+      .number-display {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="game-container">
+    <h1>Inequality Challenge</h1>
+    <p class="subtitle">Choose &lt;, =, or &gt; to make the statement true. Numbers can be decimals, fractions, mixed numbers, integers, or absolute value.</p>
+
+    <section class="controls">
+      <h2>Difficulty:</h2>
+      <div class="difficulty-buttons">
+        <button class="difficulty-button active" data-level="easy">Easy</button>
+        <button class="difficulty-button" data-level="medium">Medium</button>
+        <button class="difficulty-button" data-level="hard">Hard</button>
+      </div>
+    </section>
+
+    <section class="problem-card">
+      <div class="number-display" id="left-number">3/4</div>
+      <div class="inequality-choices">
+        <button class="ineq-button" data-symbol="<">&lt;</button>
+        <button class="ineq-button" data-symbol="=">=</button>
+        <button class="ineq-button" data-symbol=">">&gt;</button>
+      </div>
+      <div class="number-display" id="right-number">0.75</div>
+    </section>
+
+    <div class="current-selection">
+      Your inequality: <span id="current-symbol">?</span>
+    </div>
+
+    <div class="actions">
+      <button id="check-button">Check my answer</button>
+      <button id="next-button" disabled>Next problem</button>
+    </div>
+
+    <div id="feedback" class="feedback"></div>
+
+    <div class="scoreboard">
+      Questions finished: <span id="questions-finished">0</span> 
+      &bull; Correct (within 2 tries): <span id="correct-count">0</span>
+    </div>
+
+    <p class="tip">Tip: Think about where each number would go on a number line. Remember, absolute value |x| is the distance from zero.</p>
+  </div>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      const leftNumberEl = document.getElementById("left-number");
+      const rightNumberEl = document.getElementById("right-number");
+      const ineqButtons = document.querySelectorAll(".ineq-button");
+      const currentSymbolEl = document.getElementById("current-symbol");
+      const checkButton = document.getElementById("check-button");
+      const nextButton = document.getElementById("next-button");
+      const feedbackEl = document.getElementById("feedback");
+      const difficultyButtons = document.querySelectorAll(".difficulty-button");
+      const questionsFinishedEl = document.getElementById("questions-finished");
+      const correctCountEl = document.getElementById("correct-count");
+
+      let currentDifficulty = "easy";
+      let currentProblem = null;
+      let selectedSymbol = null;
+      let attempts = 0;
+      let questionsFinished = 0;
+      let correctCount = 0;
+      let questionLocked = false;
+
+      function randomInt(min, max) {
+        return Math.floor(Math.random() * (max - min + 1)) + min;
+      }
+
+      function randomChoice(arr) {
+        return arr[Math.floor(Math.random() * arr.length)];
+      }
+
+      function makeBaseNumber(difficulty) {
+        let types;
+        if (difficulty === "easy") {
+          types = ["integer", "decimal", "properFraction"];
+        } else {
+          types = ["integer", "decimal", "properFraction", "improperFraction", "mixedNumber"];
+        }
+
+        const type = randomChoice(types);
+
+        let negativeChance;
+        if (difficulty === "easy") {
+          negativeChance = 0.25;
+        } else if (difficulty === "medium") {
+          negativeChance = 0.35;
+        } else {
+          negativeChance = 0.5;
+        }
+
+        let sign = Math.random() < negativeChance ? -1 : 1;
+
+        if (type === "integer") {
+          const maxInt = difficulty === "easy" ? 12 : difficulty === "medium" ? 20 : 30;
+          let n = randomInt(0, maxInt);
+          if (n === 0) {
+            sign = 1; // avoid -0
+          }
+          const value = sign * n;
+          const display = String(value);
+          return { display, value };
+        }
+
+        if (type === "decimal") {
+          let integerPart = randomInt(0, difficulty === "hard" ? 12 : 9);
+          let decimalPart;
+          let places;
+          if (difficulty === "easy") {
+            places = 1;
+            do {
+              decimalPart = randomInt(1, 9) / 10; // never .0
+            } while (decimalPart === 0);
+          } else if (difficulty === "medium") {
+            places = 2;
+            do {
+              decimalPart = randomInt(1, 99) / 100;
+            } while (decimalPart === 0);
+          } else {
+            places = 3;
+            do {
+              decimalPart = randomInt(1, 999) / 1000;
+            } while (decimalPart === 0);
+          }
+
+          let positiveValue = integerPart + decimalPart;
+          if (positiveValue === 0) {
+            sign = 1;
+          }
+          const value = sign * positiveValue;
+          let display = positiveValue.toFixed(places);
+          if (sign === -1) {
+            display = "-" + display;
+          }
+          return { display, value };
+        }
+
+        const easyDenoms = [2, 3, 4, 5, 8, 10];
+        const medDenoms = [2, 3, 4, 5, 6, 8, 10, 12];
+        const hardDenoms = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+
+        function pickDenominator(level) {
+          if (level === "easy") return randomChoice(easyDenoms);
+          if (level === "medium") return randomChoice(medDenoms);
+          return randomChoice(hardDenoms);
+        }
+
+        if (type === "properFraction") {
+          const d = pickDenominator(difficulty);
+          const n = randomInt(1, d - 1);
+          const value = (sign * n) / d;
+          const display = sign === -1 ? `-${n}/${d}` : `${n}/${d}`;
+          return { display, value };
+        }
+
+        if (type === "improperFraction") {
+          const d = pickDenominator(difficulty);
+          const maxFactor = difficulty === "hard" ? 3 : 2;
+          const n = randomInt(d + 1, d * maxFactor);
+          const value = (sign * n) / d;
+          const display = sign === -1 ? `-${n}/${d}` : `${n}/${d}`;
+          return { display, value };
+        }
+
+        if (type === "mixedNumber") {
+          const maxWhole = difficulty === "hard" ? 8 : 5;
+          const whole = randomInt(1, maxWhole);
+          const d = pickDenominator(difficulty);
+          const n = randomInt(1, d - 1);
+          let value = whole + n / d;
+          if (sign === -1) {
+            value = -value;
+          }
+          const display = sign === -1 ? `-${whole} ${n}/${d}` : `${whole} ${n}/${d}`;
+          return { display, value };
+        }
+
+        // Fallback (shouldn't hit)
+        return { display: "0", value: 0 };
+      }
+
+      function generateRational(difficulty) {
+        const base = makeBaseNumber(difficulty);
+
+        let absChance;
+        if (difficulty === "easy") {
+          absChance = 0.25;
+        } else if (difficulty === "medium") {
+          absChance = 0.35;
+        } else {
+          absChance = 0.45;
+        }
+
+        if (Math.random() < absChance) {
+          let innerDisplay = base.display;
+          let innerValue = base.value;
+
+          if (innerValue > 0 && Math.random() < 0.7) {
+            innerValue = -innerValue;
+            const trimmed = innerDisplay.trim();
+            if (!trimmed.startsWith("-")) {
+              innerDisplay = "-" + innerDisplay;
+            }
+          }
+
+          return {
+            display: `| ${innerDisplay} |`,
+            value: Math.abs(innerValue),
+          };
+        }
+
+        return base;
+      }
+
+      function createProblem() {
+        attempts = 0;
+        questionLocked = false;
+        selectedSymbol = null;
+        currentSymbolEl.textContent = "?";
+        feedbackEl.textContent = "";
+        feedbackEl.className = "feedback";
+
+        ineqButtons.forEach((btn) => {
+          btn.classList.remove("selected");
+          btn.disabled = false;
+        });
+        checkButton.disabled = false;
+        nextButton.disabled = true;
+
+        const equalityChance = 0.2;
+        let left;
+        let right;
+
+        if (Math.random() < equalityChance) {
+          left = generateRational(currentDifficulty);
+          right = { display: left.display, value: left.value };
+        } else {
+          do {
+            left = generateRational(currentDifficulty);
+            right = generateRational(currentDifficulty);
+          } while (Math.abs(left.value - right.value) < 1e-9);
+        }
+
+        let correctSymbol;
+        if (left.value < right.value) {
+          correctSymbol = "<";
+        } else if (left.value > right.value) {
+          correctSymbol = ">";
+        } else {
+          correctSymbol = "=";
+        }
+
+        currentProblem = {
+          left,
+          right,
+          correctSymbol,
+        };
+
+        leftNumberEl.textContent = left.display;
+        rightNumberEl.textContent = right.display;
+      }
+
+      function updateScoreboard() {
+        questionsFinishedEl.textContent = questionsFinished;
+        correctCountEl.textContent = correctCount;
+      }
+
+      ineqButtons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          if (questionLocked) return;
+
+          selectedSymbol = btn.dataset.symbol;
+          currentSymbolEl.textContent = selectedSymbol;
+          ineqButtons.forEach((b) => b.classList.remove("selected"));
+          btn.classList.add("selected");
+        });
+      });
+
+      checkButton.addEventListener("click", () => {
+        if (questionLocked) return;
+
+        if (!selectedSymbol) {
+          feedbackEl.textContent = "Choose <, =, or > first.";
+          feedbackEl.className = "feedback reminder";
+          return;
+        }
+
+        attempts++;
+
+        if (!currentProblem) return;
+
+        if (selectedSymbol === currentProblem.correctSymbol) {
+          questionLocked = true;
+          correctCount++;
+          questionsFinished++;
+          updateScoreboard();
+
+          const message =
+            attempts === 1
+              ? "Great job! That's correct on your first try."
+              : "Nice work! That's correct.";
+
+          feedbackEl.textContent = message;
+          feedbackEl.className = "feedback correct";
+
+          checkButton.disabled = true;
+          ineqButtons.forEach((btn) => (btn.disabled = true));
+          nextButton.disabled = false;
+        } else {
+          if (attempts === 1) {
+            feedbackEl.textContent =
+              "Not quite. Think about each number's value and try one more time.";
+            feedbackEl.className = "feedback try-again";
+          } else {
+            questionLocked = true;
+            questionsFinished++;
+            updateScoreboard();
+
+            feedbackEl.textContent = `Good effort! The correct inequality is: ${currentProblem.left.display} ${currentProblem.correctSymbol} ${currentProblem.right.display}.`;
+            feedbackEl.className = "feedback incorrect";
+
+            checkButton.disabled = true;
+            ineqButtons.forEach((btn) => (btn.disabled = true));
+            nextButton.disabled = false;
+          }
+        }
+      });
+
+      nextButton.addEventListener("click", () => {
+        createProblem();
+      });
+
+      difficultyButtons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const level = btn.dataset.level;
+          if (level === currentDifficulty) return;
+
+          currentDifficulty = level;
+          difficultyButtons.forEach((b) => b.classList.remove("active"));
+          btn.classList.add("active");
+          createProblem();
+        });
+      });
+
+      // Initialize first problem
+      createProblem();
+      updateScoreboard();
+    });
+  </script>
+</body>
+</html>
