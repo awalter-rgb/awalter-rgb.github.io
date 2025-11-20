@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+  <meta charset='UTF-8'>
+  <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+  <title>Rational Number Line Ordering Game</title>
+  <style>
+    :root {
+      --bg: #f3f4f6;
+      --card-bg: #eff6ff;
+      --card-border: #bfdbfe;
+      --accent: #2563eb;
+      --accent-soft: #dbeafe;
+      --axis: #111827;
+      --tick: #111827;
+      --zone-border: #9ca3af;
+      --correct: #16a34a;
+      --correct-soft: #dcfce7;
+      --incorrect: #dc2626;
+      --incorrect-soft: #fee2e2;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: #111827;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 1.5rem;
+    }
+
+    h1 {
+      font-size: 2rem;
+      margin: 0 0 0.25rem;
+    }
+
+    h2 {
+      font-size: 1.1rem;
+      margin: 1.5rem 0 0.5rem;
+    }
+
+    .instructions {
+      margin: 0 0 1rem;
+      color: #4b5563;
+      max-width: 48rem;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+
+    .controls label {
+      font-weight: 600;
+    }
+
+    select,
+    button {
+      font-size: 0.95rem;
+      padding: 0.4rem 0.9rem;
+      border-radius: 999px;
+      border: 1px solid #d1d5db;
+      background: #fff;
+      color: #111827;
+    }
+
+    select:focus,
+    button:focus {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
+
+    button {
+      border: none;
+      cursor: pointer;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.2);
+      transition: transform 0.05s ease, box-shadow 0.05s ease, filter 0.05s ease;
+    }
+
+    button.secondary {
+      background: #fff;
+      color: #111827;
+      border: 1px solid #d1d5db;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+    }
+
+    button:hover {
+      filter: brightness(0.96);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 8px rgba(15, 23, 42, 0.18);
+    }
+
+    button:active {
+      transform: translateY(0);
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.2);
+      filter: brightness(0.93);
+    }
+
+    .number-pool {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      min-height: 80px;
+      padding: 0.75rem;
+      border-radius: 0.9rem;
+      background: #ffffff;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+    }
+
+    .number-card {
+      min-width: 70px;
+      padding: 0.7rem 0.9rem;
+      font-size: 1.3rem;
+      text-align: center;
+      border-radius: 0.85rem;
+      background: var(--card-bg);
+      border: 2px solid var(--card-border);
+      cursor: grab;
+      user-select: none;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.1);
+      transition: transform 0.08s ease, box-shadow 0.08s ease, background 0.08s ease;
+    }
+
+    .number-card:active {
+      cursor: grabbing;
+      transform: scale(1.04);
+      box-shadow: 0 5px 12px rgba(15, 23, 42, 0.25);
+      background: #e0edff;
+    }
+
+    #numberLineWrapper {
+      margin-top: 0.5rem;
+      background: #ffffff;
+      border-radius: 0.9rem;
+      padding: 1.25rem 1rem;
+      box-shadow: 0 1px 4px rgba(15, 23, 42, 0.12);
+    }
+
+    #numberLine {
+      position: relative;
+      width: 100%;
+      height: 260px;
+    }
+
+    .axis {
+      position: absolute;
+      left: 5%;
+      right: 5%;
+      top: 45%;
+      height: 3px;
+      background: var(--axis);
+      border-radius: 999px;
+    }
+
+        /* Labeled whole-number ticks on the axis */
+    .axis-tick-wrapper {
+      position: absolute;
+      top: 46%;
+      transform: translate(-50%, 0);
+      display: flex;
+      flex-direction: column; /* tick on axis, label below */
+      align-items: center;
+    }
+
+    .tick-label {
+      font-size: 0.8rem;
+      margin-top: 4px;
+      color: #374151;
+    }
+
+    /* Tick shape shared by axis labels and guide ticks */
+    .tick {
+      width: 2px;
+      height: 20px;
+      background: var(--tick);
+      border-radius: 999px;
+    }
+
+        /* Drop zones and their guide ticks (for exact target positions) */
+        /* Drop zones and their guide ticks (for exact target positions) */
+    .drop-wrapper {
+      position: absolute;
+      top: 22%; /* higher so boxes sit clearly above the axis */
+      transform: translate(-50%, 0);
+      display: flex;
+      flex-direction: column-reverse; /* box above, tick closer to axis */
+      align-items: center;
+    }
+
+        .drop-zone {
+      margin-top: 0;
+      margin-bottom: 8px; /* space between box and guide tick below */
+      width: 80px;
+      height: 52px;
+      border-radius: 0.9rem;
+      border: 2px dashed var(--zone-border);
+      background: #f9fafb;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
+    }
+
+    .drop-zone.over {
+      background: var(--accent-soft);
+      border-color: var(--accent);
+      box-shadow: 0 3px 8px rgba(37, 99, 235, 0.35);
+      transform: translateY(-2px);
+    }
+
+    .drop-zone.correct {
+      border-style: solid;
+      border-color: var(--correct);
+      background: var(--correct-soft);
+    }
+
+    .drop-zone.incorrect {
+      border-style: solid;
+      border-color: var(--incorrect);
+      background: var(--incorrect-soft);
+    }
+
+    .feedback {
+      margin-top: 1rem;
+      min-height: 1.5rem;
+      font-size: 1rem;
+    }
+
+    .feedback.success {
+      color: #166534;
+      font-weight: 600;
+    }
+
+    .feedback.error {
+      color: #b91c1c;
+    }
+
+    .legend {
+      margin-top: 0.5rem;
+      font-size: 0.85rem;
+      color: #6b7280;
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      margin-right: 0.75rem;
+    }
+
+    .legend-chip {
+      width: 16px;
+      height: 10px;
+      border-radius: 4px;
+      border: 2px solid var(--zone-border);
+      background: #f9fafb;
+    }
+
+    .legend-chip.correct {
+      border-color: var(--correct);
+      background: var(--correct-soft);
+    }
+
+    .legend-chip.incorrect {
+      border-color: var(--incorrect);
+      background: var(--incorrect-soft);
+    }
+
+    @media (max-width: 768px) {
+      h1 {
+        font-size: 1.6rem;
+      }
+
+      .controls {
+        flex-direction: row;
+        gap: 0.5rem;
+      }
+
+      #numberLine {
+        height: 230px;
+      }
+
+      .number-card {
+        font-size: 1.1rem;
+        min-width: 64px;
+        padding: 0.55rem 0.65rem;
+      }
+
+      .drop-zone {
+        width: 70px;
+        height: 46px;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .container {
+        padding: 1rem;
+      }
+
+      #numberLine {
+        height: 210px;
+      }
+
+      .drop-zone {
+        width: 64px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class='container'>
+    <h1>Rational Number Line Ordering Game</h1>
+    <p class='instructions'>Drag each number onto the number line so that the values increase from left to right. When you're ready, select <strong>Check Answer</strong> to see how you did. The number line shows labeled whole numbers to guide you.</p>
+
+    <div class='controls'>
+      <label for='difficultySelect'>Difficulty:</label>
+      <select id='difficultySelect'>
+        <option value='easy'>Easy</option>
+        <option value='medium'>Medium</option>
+        <option value='hard'>Hard</option>
+      </select>
+      <button id='newSetBtn' type='button'>New Set</button>
+      <button id='checkBtn' type='button' class='secondary'>Check Answer</button>
+    </div>
+
+    <h2>Numbers to Place</h2>
+    <div id='numberPool' class='number-pool'></div>
+
+    <h2>Number Line</h2>
+    <div id='numberLineWrapper'>
+      <div id='numberLine'></div>
+      <div class='legend'>
+        <span><span class='legend-chip'></span> Empty spot</span>
+        <span><span class='legend-chip correct'></span> Correct placement</span>
+        <span><span class='legend-chip incorrect'></span> Needs to move</span>
+      </div>
+    </div>
+
+    <div id='feedback' class='feedback'></div>
+  </div>
+
+  <script>
+    (function () {
+      const DIFFICULTIES = {
+        easy: {
+          key: 'easy',
+          label: 'Easy',
+          rangeMin: -5,
+          rangeMax: 5,
+          denominators: [2, 4],
+          decimalStep: 0.5,
+          decimalPlaces: 1,
+          totalCount: 6,
+          requiredTypes: ['integer', 'decimal', 'proper', 'mixed'],
+          allowedTypes: ['integer', 'decimal', 'proper', 'mixed'],
+          allowImproper: false,
+          maxWholeMixed: 3,
+          maxImproperMultiple: 3
+        },
+        medium: {
+          key: 'medium',
+          label: 'Medium',
+          rangeMin: -10,
+          rangeMax: 10,
+          denominators: [2, 3, 4, 5, 8, 10],
+          decimalStep: 0.1,
+          decimalPlaces: 1,
+          totalCount: 8,
+          requiredTypes: ['integer', 'decimal', 'proper', 'mixed', 'improper'],
+          allowedTypes: ['integer', 'decimal', 'proper', 'mixed', 'improper'],
+          allowImproper: true,
+          maxWholeMixed: 5,
+          maxImproperMultiple: 5
+        },
+        hard: {
+          key: 'hard',
+          label: 'Hard',
+          rangeMin: -20,
+          rangeMax: 20,
+          denominators: [2, 3, 4, 5, 6, 8, 9, 10, 12],
+          decimalStep: 0.25,
+          decimalPlaces: 2,
+          totalCount: 10,
+          requiredTypes: ['integer', 'decimal', 'proper', 'mixed', 'improper'],
+          allowedTypes: ['integer', 'decimal', 'proper', 'mixed', 'improper'],
+          allowImproper: true,
+          maxWholeMixed: 8,
+          maxImproperMultiple: 8
+        }
+      };
+
+      let currentDifficulty = 'easy';
+      let nextId = 1;
+      let draggedCard = null;
+      let sourceContainer = null;
+
+      document.addEventListener('DOMContentLoaded', function () {
+        const difficultySelect = document.getElementById('difficultySelect');
+        const newSetBtn = document.getElementById('newSetBtn');
+        const checkBtn = document.getElementById('checkBtn');
+        const numberPool = document.getElementById('numberPool');
+
+        difficultySelect.addEventListener('change', function () {
+          currentDifficulty = difficultySelect.value;
+          startNewGame();
+        });
+
+        newSetBtn.addEventListener('click', startNewGame);
+        checkBtn.addEventListener('click', checkAnswers);
+
+        numberPool.addEventListener('dragover', handleDragOver);
+        numberPool.addEventListener('drop', handleDrop);
+
+        startNewGame();
+      });
+
+      function startNewGame() {
+        clearFeedback();
+        const pool = document.getElementById('numberPool');
+        const line = document.getElementById('numberLine');
+        pool.innerHTML = '';
+        line.innerHTML = '';
+
+        const numbers = generateNumbers(currentDifficulty);
+        const sorted = numbers.slice().sort(function (a, b) {
+          return a.value - b.value;
+        });
+
+        renderNumberLine(sorted);
+        renderNumberCards(numbers);
+      }
+
+      function clearFeedback() {
+        const fb = document.getElementById('feedback');
+        fb.textContent = '';
+        fb.className = 'feedback';
+      }
+
+      function randomInt(min, max) {
+        return Math.floor(Math.random() * (max - min + 1)) + min;
+      }
+
+      function shuffle(array) {
+        for (let i = array.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          const temp = array[i];
+          array[i] = array[j];
+          array[j] = temp;
+        }
+        return array;
+      }
+
+      function isDuplicateValue(value, existingValues) {
+        const epsilon = 1e-6;
+        for (let i = 0; i < existingValues.length; i++) {
+          if (Math.abs(existingValues[i] - value) < epsilon) {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      function generateNumbers(diffKey) {
+        const cfg = DIFFICULTIES[diffKey];
+        const numbers = [];
+        const usedValues = [];
+
+        function addNumberOfType(type, forcedSign) {
+          let attempts = 0;
+          while (attempts < 100) {
+            attempts++;
+            const obj = generateByType(type, cfg, forcedSign);
+            if (!obj) continue;
+            if (obj.value < cfg.rangeMin || obj.value > cfg.rangeMax) continue;
+            if (isDuplicateValue(obj.value, usedValues)) continue;
+            numbers.push(obj);
+            usedValues.push(obj.value);
+            return;
+          }
+        }
+
+        const req = cfg.requiredTypes.slice();
+        if (req.length >= 2) {
+          // Guarantee at least one positive and one negative among required types
+          addNumberOfType(req.shift(), 'positive');
+          addNumberOfType(req.shift(), 'negative');
+        }
+        for (let i = 0; i < req.length; i++) {
+          addNumberOfType(req[i]);
+        }
+
+        while (numbers.length < cfg.totalCount) {
+          const t = cfg.allowedTypes[randomInt(0, cfg.allowedTypes.length - 1)];
+          addNumberOfType(t);
+        }
+
+        const hasPositive = numbers.some(function (n) { return n.value > 0; });
+        const hasNegative = numbers.some(function (n) { return n.value < 0; });
+        if (!hasPositive) {
+          addNumberOfType('integer', 'positive');
+        }
+        if (!hasNegative) {
+          addNumberOfType('integer', 'negative');
+        }
+
+        return shuffle(numbers);
+      }
+
+      function generateByType(type, cfg, forcedSign) {
+        if (type === 'integer') return generateInteger(cfg, forcedSign);
+        if (type === 'decimal') return generateDecimal(cfg, forcedSign);
+        if (type === 'proper') return generateProperFraction(cfg, forcedSign);
+        if (type === 'mixed') return generateMixedNumber(cfg, forcedSign);
+        if (type === 'improper' && cfg.allowImproper) return generateImproperFraction(cfg, forcedSign);
+        if (type === 'improper' && !cfg.allowImproper) return null;
+        return null;
+      }
+
+      function signedValue(base, forcedSign) {
+        if (forcedSign === 'positive') return Math.abs(base);
+        if (forcedSign === 'negative') return -Math.abs(base);
+        return Math.random() < 0.5 ? base : -base;
+      }
+
+      function generateInteger(cfg, forcedSign) {
+        const maxPos = Math.max(1, Math.floor(cfg.rangeMax));
+        const maxNeg = Math.max(1, Math.abs(Math.ceil(cfg.rangeMin)));
+        let base;
+        if (forcedSign === 'positive') {
+          base = randomInt(1, maxPos);
+        } else if (forcedSign === 'negative') {
+          base = -randomInt(1, maxNeg);
+        } else {
+          if (Math.random() < 0.5) {
+            base = randomInt(1, maxPos);
+          } else {
+            base = -randomInt(1, maxNeg);
+          }
+        }
+        const value = base;
+        return {
+          id: 'n' + (nextId++),
+          value: value,
+          display: String(value),
+          kind: 'integer'
+        };
+      }
+
+      function generateDecimal(cfg, forcedSign) {
+        const step = cfg.decimalStep;
+        const minM = Math.ceil(cfg.rangeMin / step);
+        const maxM = Math.floor(cfg.rangeMax / step);
+        let attempts = 0;
+        while (attempts < 100) {
+          attempts++;
+          let m = randomInt(minM, maxM);
+          let value = m * step;
+          if (Number.isInteger(value)) continue;
+          value = signedValue(Math.abs(value), forcedSign);
+          const decimals = cfg.decimalPlaces;
+          const display = value.toFixed(decimals);
+          return {
+            id: 'n' + (nextId++),
+            value: value,
+            display: display,
+            kind: 'decimal'
+          };
+        }
+        return null;
+      }
+
+      function generateProperFraction(cfg, forcedSign) {
+        const den = cfg.denominators[randomInt(0, cfg.denominators.length - 1)];
+        const num = randomInt(1, den - 1);
+        const base = num / den;
+        const value = signedValue(base, forcedSign);
+        const signStr = value < 0 ? '-' : '';
+        const display = signStr + Math.abs(num) + '/' + den;
+        return {
+          id: 'n' + (nextId++),
+          value: value,
+          display: display,
+          kind: 'proper'
+        };
+      }
+
+      function generateMixedNumber(cfg, forcedSign) {
+        const den = cfg.denominators[randomInt(0, cfg.denominators.length - 1)];
+        const num = randomInt(1, den - 1);
+        const whole = randomInt(1, cfg.maxWholeMixed);
+        const base = whole + num / den;
+        const value = signedValue(base, forcedSign);
+        const signStr = value < 0 ? '-' : '';
+        const display = signStr + whole + ' ' + num + '/' + den;
+        return {
+          id: 'n' + (nextId++),
+          value: value,
+          display: display,
+          kind: 'mixed'
+        };
+      }
+
+      function generateImproperFraction(cfg, forcedSign) {
+        const den = cfg.denominators[randomInt(0, cfg.denominators.length - 1)];
+        const maxMultiple = cfg.maxImproperMultiple;
+        const multiple = randomInt(2, maxMultiple);
+        let num = randomInt(den + 1, den * multiple);
+        const base = num / den;
+        const value = signedValue(base, forcedSign);
+        if (cfg.key === 'easy') {
+          // Extra guard, though allowImproper is false for easy
+          if (den > 4 || Math.abs(num) > 4 * den) return null;
+        }
+        const signStr = value < 0 ? '-' : '';
+        const display = signStr + Math.abs(num) + '/' + den;
+        return {
+          id: 'n' + (nextId++),
+          value: value,
+          display: display,
+          kind: 'improper'
+        };
+      }
+
+      function renderNumberCards(numbers) {
+        const pool = document.getElementById('numberPool');
+        pool.innerHTML = '';
+        numbers.forEach(function (num) {
+          const card = document.createElement('div');
+          card.className = 'number-card';
+          card.textContent = num.display;
+          card.dataset.id = num.id;
+          card.dataset.value = String(num.value);
+          card.setAttribute('draggable', 'true');
+          card.addEventListener('dragstart', handleDragStart);
+          card.addEventListener('dragend', handleDragEnd);
+          pool.appendChild(card);
+        });
+      }
+
+      function renderNumberLine(sortedNumbers) {
+        const line = document.getElementById('numberLine');
+        line.innerHTML = '';
+
+        const values = sortedNumbers.map(function (n) { return n.value; });
+        let rawMin = Math.min.apply(null, values);
+        let rawMax = Math.max.apply(null, values);
+        let span = rawMax - rawMin;
+
+        if (span === 0) {
+          span = 1;
+          rawMin -= 0.5;
+          rawMax += 0.5;
+        }
+
+        // Choose a neat integer range that covers all values and always includes 0
+        let axisMin = Math.floor(rawMin);
+        let axisMax = Math.ceil(rawMax);
+
+        axisMin = Math.min(axisMin, 0);
+        axisMax = Math.max(axisMax, 0);
+
+        if (axisMax - axisMin < 1) {
+          axisMax = axisMin + 1;
+        }
+
+        const minRange = axisMin;
+        const maxRange = axisMax;
+
+        line.dataset.minRange = String(minRange);
+        line.dataset.maxRange = String(maxRange);
+
+        const axis = document.createElement('div');
+        axis.className = 'axis';
+        line.appendChild(axis);
+
+        // Draw labeled integer ticks along the axis
+        for (let v = axisMin; v <= axisMax; v++) {
+          const ratio = (v - minRange) / (maxRange - minRange);
+          const leftPercent = 5 + ratio * 90;
+
+          const wrapper = document.createElement('div');
+          wrapper.className = 'axis-tick-wrapper';
+          wrapper.style.left = leftPercent + '%';
+
+          const tick = document.createElement('div');
+          tick.className = 'tick';
+
+          const label = document.createElement('div');
+          label.className = 'tick-label';
+          label.textContent = v.toString();
+
+          wrapper.appendChild(tick);
+          wrapper.appendChild(label);
+          line.appendChild(wrapper);
+        }
+
+        // Create drop positions for each target number (may be between integers)
+        sortedNumbers.forEach(function (num) {
+          const ratio = (num.value - minRange) / (maxRange - minRange);
+          const leftPercent = 5 + ratio * 90;
+
+          const wrapper = document.createElement('div');
+          wrapper.className = 'drop-wrapper';
+          wrapper.style.left = leftPercent + '%';
+
+          const guideTick = document.createElement('div');
+          guideTick.className = 'tick';
+
+          const dropZone = document.createElement('div');
+          dropZone.className = 'drop-zone';
+          dropZone.dataset.correctId = num.id;
+
+          dropZone.addEventListener('dragover', handleDragOver);
+          dropZone.addEventListener('drop', handleDrop);
+          dropZone.addEventListener('dragenter', function () {
+            dropZone.classList.add('over');
+          });
+          dropZone.addEventListener('dragleave', function (e) {
+            if (!dropZone.contains(e.relatedTarget)) {
+              dropZone.classList.remove('over');
+            }
+          });
+
+          wrapper.appendChild(guideTick);
+          wrapper.appendChild(dropZone);
+          line.appendChild(wrapper);
+        });
+      }
+
+      function handleDragStart(e) {
+        draggedCard = e.target;
+        sourceContainer = draggedCard.parentElement;
+        e.dataTransfer.effectAllowed = 'move';
+      }
+
+      function handleDragEnd() {
+        draggedCard = null;
+        sourceContainer = null;
+        const zones = document.querySelectorAll('.drop-zone.over');
+        zones.forEach(function (z) { z.classList.remove('over'); });
+      }
+
+      function handleDragOver(e) {
+        e.preventDefault();
+        if (e.dataTransfer) {
+          e.dataTransfer.dropEffect = 'move';
+        }
+      }
+
+      function handleDrop(e) {
+        e.preventDefault();
+        const target = e.currentTarget;
+        if (!draggedCard) return;
+
+        const pool = document.getElementById('numberPool');
+
+        if (target.classList.contains('drop-zone')) {
+          target.classList.remove('over');
+          const existing = target.querySelector('.number-card');
+
+          if (existing && sourceContainer && sourceContainer.classList.contains('drop-zone')) {
+            sourceContainer.appendChild(existing);
+          } else if (existing && !sourceContainer.classList.contains('drop-zone')) {
+            pool.appendChild(existing);
+          }
+
+          target.appendChild(draggedCard);
+        } else if (target.id === 'numberPool') {
+          target.appendChild(draggedCard);
+        }
+      }
+
+      function checkAnswers() {
+        const dropZones = Array.prototype.slice.call(document.querySelectorAll('.drop-zone'));
+        const feedback = document.getElementById('feedback');
+
+        dropZones.forEach(function (dz) {
+          dz.classList.remove('correct', 'incorrect');
+        });
+
+        const total = dropZones.length;
+        let correctCount = 0;
+        let placedCount = 0;
+
+        dropZones.forEach(function (dz) {
+          const card = dz.querySelector('.number-card');
+          if (card) {
+            placedCount++;
+            if (card.dataset.id === dz.dataset.correctId) {
+              correctCount++;
+              dz.classList.add('correct');
+            } else {
+              dz.classList.add('incorrect');
+            }
+          } else {
+            dz.classList.add('incorrect');
+          }
+        });
+
+        if (correctCount === total && placedCount === total) {
+          feedback.textContent = 'All correct! Nice work placing each rational number in order.';
+          feedback.className = 'feedback success';
+        } else {
+          feedback.textContent = 'You have ' + correctCount + ' out of ' + total + ' in the correct place. Red boxes show spots that need to be fixed.';
+          feedback.className = 'feedback error';
+        }
+      }
+    })();
+  </script>
+</body>
+</html>
