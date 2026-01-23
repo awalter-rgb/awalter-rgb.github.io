@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Merge PDFs and DOCX in your browser</title>
+  <style>
+    :root { --fg:#111; --muted:#555; --border:#ddd; --bg:#fff; }
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:32px;max-width:980px;color:var(--fg);background:var(--bg)}
+    h1{margin:0 0 10px 0}
+    .muted{color:var(--muted);font-size:14px;line-height:1.4}
+    .card{border:1px solid var(--border);border-radius:14px;padding:18px;margin:14px 0}
+    .row{margin:12px 0}
+    label{display:block;font-weight:600;margin-bottom:6px}
+    input[type="text"]{width:100%;padding:10px;border:1px solid #ccc;border-radius:10px}
+    input[type="file"]{width:100%}
+    button{padding:10px 14px;border:0;border-radius:12px;background:#111;color:#fff;cursor:pointer}
+    button.secondary{background:#f2f2f2;color:#111;border:1px solid #ddd}
+    button:disabled{opacity:.55;cursor:not-allowed}
+    .filelist{list-style:none;padding:0;margin:0}
+    .fileitem{display:flex;gap:10px;align-items:center;justify-content:space-between;border:1px solid #eee;border-radius:12px;padding:10px 12px;margin:8px 0}
+    .left{display:flex;gap:10px;align-items:center;min-width:0}
+    .badge{font-size:12px;padding:4px 8px;border-radius:999px;border:1px solid #ddd;background:#fafafa}
+    .name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:560px}
+    .actions{display:flex;gap:8px;flex-wrap:wrap}
+    .status{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;font-size:13px;white-space:pre-wrap}
+    .hint{margin-top:8px}
+    .hr{height:1px;background:#eee;margin:12px 0}
+    .warn{background:#fff6e5;border:1px solid #ffd08a;border-radius:12px;padding:10px 12px;white-space:pre-wrap}
+    .ok{background:#eefaf0;border:1px solid #b7e1bf;border-radius:12px;padding:10px 12px}
+    .hidden{display:none}
+
+    /* Offscreen render host: must NOT be display:none or html2canvas will capture blank */
+    #renderHost{
+      position:fixed;
+      left:-100000px;
+      top:0;
+      width:794px;           /* ~A4 width at 96 DPI */
+      opacity:0;
+      pointer-events:none;
+      z-index:-1;
+    }
+    #renderDoc{width:794px;background:#fff;color:#111;padding:48px;box-sizing:border-box}
+    #renderDoc img{max-width:100%;height:auto}
+    #renderDoc table{border-collapse:collapse;max-width:100%}
+    #renderDoc td,#renderDoc th{border:1px solid #ddd;padding:6px;vertical-align:top}
+    #renderDoc h1,#renderDoc h2,#renderDoc h3{margin:0.8em 0 0.4em}
+  </style>
+</head>
+<body>
+  <h1>Merge up to 28 PDFs and DOCX files into one PDF</h1>
+  <div class="muted">Everything runs in your browser. Files stay on your machine. DOCX is converted to PDF in-browser, then merged with PDFs.</div>
+
+  <div class="card">
+    <div class="row">
+      <label for="files">Choose files (.pdf, .docx)</label>
+      <input id="files" type="file" accept=".pdf,.docx" multiple />
+      <div class="muted hint">Order matters. Use the Up and Down buttons to reorder after selecting.</div>
+    </div>
+
+    <div class="row">
+      <label>Selected files</label>
+      <ul id="fileList" class="filelist"></ul>
+      <div id="empty" class="muted">No files selected.</div>
+    </div>
+
+    <div class="hr"></div>
+
+    <div class="row">
+      <label for="outname">Output filename</label>
+      <input id="outname" type="text" value="merged.pdf" />
+      <div class="muted hint">The download will use this name.</div>
+    </div>
+
+    <div class="row" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <button id="mergeBtn">Merge and download PDF</button>
+      <button id="clearBtn" class="secondary" type="button">Clear</button>
+      <span id="count" class="muted"></span>
+    </div>
+
+    <div id="note" class="warn hidden"></div>
+    <div id="done" class="ok hidden"></div>
+
+    <div class="row">
+      <label>Status</label>
+      <div id="status" class="status">Ready.</div>
+    </div>
+
+    <div class="row muted">
+      DOCX conversion uses Mammoth to turn DOCX into HTML and then renders it into a PDF.
+      Tables, images, headings, and basic formatting carry through. Page-perfect layout depends on the document.
+    </div>
+  </div>
+
+  <!-- Offscreen render target for DOCX -> HTML -> canvas -->
+  <div id="renderHost" aria-hidden="true">
+    <div id="renderDoc"></div>
+  </div>
+
+  <!-- Libraries from CDNs (no installs) -->
+  <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+
+  <script>
+    const MAX_FILES = 28;
+    const filesInput = document.getElementById('files');
+    const fileListEl = document.getElementById('fileList');
+    const emptyEl = document.getElementById('empty');
+    const mergeBtn = document.getElementById('mergeBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const outnameEl = document.getElementById('outname');
+    const statusEl = document.getElementById('status');
+    const countEl = document.getElementById('count');
+    const noteEl = document.getElementById('note');
+    const doneEl = document.getElementById('done');
+
+    const renderDocEl = document.getElementById('renderDoc');
+
+    /** @type {{id:string, file:File}[]} */
+    let selected = [];
+
+    function uid() {
+      return Math.random().toString(16).slice(2) + Date.now().toString(16);
+    }
+
+    function setStatus(msg) {
+      statusEl.textContent = msg;
+    }
+
+    function showNote(msg) {
+      noteEl.textContent = msg;
+      noteEl.classList.remove('hidden');
+    }
+
+    function clearNote() {
+      noteEl.textContent = '';
+      noteEl.classList.add('hidden');
+    }
+
+    function showDone(msg) {
+      doneEl.textContent = msg;
+      doneEl.classList.remove('hidden');
+    }
+
+    function clearDone() {
+      doneEl.textContent = '';
+      doneEl.classList.add('hidden');
+    }
+
+    function normalizeOutname(name) {
+      const trimmed = (name || 'merged.pdf').trim();
+      if (!trimmed.toLowerCase().endsWith('.pdf')) return trimmed + '.pdf';
+      return trimmed;
+    }
+
+    function bytesToMB(n) {
+      return (n / (1024 * 1024)).toFixed(1);
+    }
+
+    function renderList() {
+      fileListEl.innerHTML = '';
+      emptyEl.style.display = selected.length ? 'none' : 'block';
+
+      selected.forEach((item, idx) => {
+        const ext = item.file.name.split('.').pop().toLowerCase();
+        const li = document.createElement('li');
+        li.className = 'fileitem';
+
+        const left = document.createElement('div');
+        left.className = 'left';
+
+        const badge = document.createElement('span');
+        badge.className = 'badge';
+        badge.textContent = ext.toUpperCase();
+
+        const name = document.createElement('div');
+        name.className = 'name';
+        name.textContent = `${idx + 1}. ${item.file.name} (${bytesToMB(item.file.size)} MB)`;
+
+        left.appendChild(badge);
+        left.appendChild(name);
+
+        const actions = document.createElement('div');
+        actions.className = 'actions';
+
+        const up = document.createElement('button');
+        up.type = 'button';
+        up.className = 'secondary';
+        up.textContent = 'Up';
+        up.disabled = idx === 0;
+        up.onclick = () => {
+          const t = selected[idx - 1];
+          selected[idx - 1] = selected[idx];
+          selected[idx] = t;
+          renderList();
+        };
+
+        const down = document.createElement('button');
+        down.type = 'button';
+        down.className = 'secondary';
+        down.textContent = 'Down';
+        down.disabled = idx === selected.length - 1;
+        down.onclick = () => {
+          const t = selected[idx + 1];
+          selected[idx + 1] = selected[idx];
+          selected[idx] = t;
+          renderList();
+        };
+
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'secondary';
+        remove.textContent = 'Remove';
+        remove.onclick = () => {
+          selected = selected.filter(x => x.id !== item.id);
+          renderList();
+        };
+
+        actions.appendChild(up);
+        actions.appendChild(down);
+        actions.appendChild(remove);
+
+        li.appendChild(left);
+        li.appendChild(actions);
+        fileListEl.appendChild(li);
+      });
+
+      countEl.textContent = selected.length ? `${selected.length} / ${MAX_FILES} files` : '';
+    }
+
+    filesInput.addEventListener('change', () => {
+      clearNote();
+      clearDone();
+      setStatus('Ready.');
+
+      const files = Array.from(filesInput.files || []);
+      if (!files.length) return;
+
+      const combined = selected.concat(files.map(f => ({ id: uid(), file: f })));
+
+      if (combined.length > MAX_FILES) {
+        showNote(`You selected ${combined.length} files. Limit is ${MAX_FILES}.`);
+        selected = combined.slice(0, MAX_FILES);
+      } else {
+        selected = combined;
+      }
+
+      filesInput.value = '';
+      renderList();
+    });
+
+    clearBtn.addEventListener('click', () => {
+      selected = [];
+      filesInput.value = '';
+      clearNote();
+      clearDone();
+      setStatus('Ready.');
+      renderList();
+    });
+
+    async function fileToArrayBuffer(file) {
+      return await file.arrayBuffer();
+    }
+
+    async function waitForImages(container) {
+      const imgs = Array.from(container.querySelectorAll('img'));
+      if (!imgs.length) return;
+      await Promise.all(imgs.map(async (img) => {
+        try {
+          if (img.complete && img.naturalWidth > 0) {
+            if (img.decode) await img.decode();
+            return;
+          }
+          await new Promise((resolve, reject) => {
+            img.onload = () => resolve();
+            img.onerror = () => resolve();
+          });
+          if (img.decode) await img.decode().catch(() => {});
+        } catch (_) {}
+      }));
+    }
+
+    async function docxToPdfBytes(docxArrayBuffer) {
+      // Inline images so html2canvas can render them without CORS issues.
+      const options = {
+        convertImage: mammoth.images.inline(async function(element) {
+          const base64 = await element.read('base64');
+          return { src: 'data:' + element.contentType + ';base64,' + base64 };
+        })
+      };
+
+      const result = await mammoth.convertToHtml({ arrayBuffer: docxArrayBuffer }, options);
+      const html = result.value || '';
+
+      renderDocEl.innerHTML = html;
+
+      renderDocEl.style.fontFamily = 'Calibri, Arial, sans-serif';
+      renderDocEl.style.fontSize = '12pt';
+      renderDocEl.style.lineHeight = '1.35';
+
+      // Ensure fonts and images are ready before capture.
+      if (document.fonts && document.fonts.ready) {
+        try { await document.fonts.ready; } catch (_) {}
+      }
+      await waitForImages(renderDocEl);
+
+      const canvas = await html2canvas(renderDocEl, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#ffffff'
+      });
+
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
+      const pageWidthPt = pdf.internal.pageSize.getWidth();
+      const pageHeightPt = pdf.internal.pageSize.getHeight();
+
+      const imgWidthPt = pageWidthPt;
+      const pxToPt = imgWidthPt / canvas.width;
+      const pageHeightPx = Math.max(1, Math.floor(pageHeightPt / pxToPt));
+
+      let y = 0;
+      let pageIndex = 0;
+
+      while (y < canvas.height) {
+        const sliceHeightPx = Math.min(pageHeightPx, canvas.height - y);
+
+        const slice = document.createElement('canvas');
+        slice.width = canvas.width;
+        slice.height = sliceHeightPx;
+
+        const ctx = slice.getContext('2d');
+        ctx.drawImage(
+          canvas,
+          0, y, canvas.width, sliceHeightPx,
+          0, 0, slice.width, slice.height
+        );
+
+        const sliceDataUrl = slice.toDataURL('image/jpeg', 1.0);
+        const sliceHeightPt = sliceHeightPx * pxToPt;
+
+        if (pageIndex > 0) pdf.addPage();
+        pdf.addImage(sliceDataUrl, 'JPEG', 0, 0, imgWidthPt, sliceHeightPt);
+
+        y += sliceHeightPx;
+        pageIndex += 1;
+      }
+
+      renderDocEl.innerHTML = '';
+
+      return pdf.output('arraybuffer');
+    }
+
+    async function mergeAllToPdf() {
+      clearNote();
+      clearDone();
+
+      if (!selected.length) {
+        showNote('Select at least one file.');
+        return;
+      }
+      if (selected.length > MAX_FILES) {
+        showNote(`Too many files. Limit is ${MAX_FILES}.`);
+        return;
+      }
+
+      mergeBtn.disabled = true;
+      clearBtn.disabled = true;
+
+      try {
+        const outPdf = await PDFLib.PDFDocument.create();
+        const warnings = [];
+
+        for (let i = 0; i < selected.length; i++) {
+          const { file } = selected[i];
+          const name = file.name;
+          const ext = (name.split('.').pop() || '').toLowerCase();
+
+          setStatus(`Processing ${i + 1} of ${selected.length}: ${name}`);
+
+          let pdfBytes;
+          if (ext === 'pdf') {
+            pdfBytes = await fileToArrayBuffer(file);
+          } else if (ext === 'docx') {
+            pdfBytes = await docxToPdfBytes(await fileToArrayBuffer(file));
+            warnings.push(`DOCX converted: ${name}`);
+          } else {
+            throw new Error(`Unsupported file type: ${name}`);
+          }
+
+          const src = await PDFLib.PDFDocument.load(pdfBytes);
+          const copied = await outPdf.copyPages(src, src.getPageIndices());
+          copied.forEach(p => outPdf.addPage(p));
+        }
+
+        setStatus('Saving merged PDF...');
+        const mergedBytes = await outPdf.save();
+
+        const filename = normalizeOutname(outnameEl.value);
+        const blob = new Blob([mergedBytes], { type: 'application/pdf' });
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+
+        if (warnings.length) {
+          showNote(warnings.join('\n'));
+        }
+        showDone(`Downloaded: ${filename}`);
+        setStatus('Done.');
+      } finally {
+        mergeBtn.disabled = false;
+        clearBtn.disabled = false;
+      }
+    }
+
+    mergeBtn.addEventListener('click', mergeAllToPdf);
+
+    renderList();
+  </script>
+</body>
+</html>
