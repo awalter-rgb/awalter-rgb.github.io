@@ -1,223 +1,505 @@
-"""PDF Merger Web App (Flask)
-
-What it does
-- Accepts uploads (.pdf, .docx, .pptx)
-- Converts .docx and .pptx to PDF using LibreOffice (soffice) in headless mode
-- Merges everything into ONE PDF and returns it as a download
-
-Run
-  pip install flask pypdf
-  python app.py
-
-Then open:
-  http://127.0.0.1:5000
-
-Notes
-- Requires LibreOffice to be installed and the 'soffice' executable to be on PATH.
-- Upload order is preserved in the order the browser submits the files.
-"""
-
-from __future__ import annotations
-
-import os
-import re
-import shutil
-import subprocess
-import tempfile
-from pathlib import Path
-
-from flask import Flask, Response, flash, redirect, render_template_string, request, send_file, url_for
-from pypdf import PdfReader, PdfWriter
-
-
-APP = Flask(__name__)
-APP.secret_key = os.environ.get("APP_SECRET", "change-me")
-
-# Adjust as you like (bytes). 200 MB default.
-APP.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_UPLOAD_BYTES", str(200 * 1024 * 1024)))
-
-ALLOWED_EXTS = {".pdf", ".docx", ".pptx"}
-
-
-HTML = """
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Merge PDFs, DOCX & PPTX into one PDF</title>
+  <title>Merge PDF, DOCX, PPTX → one PDF</title>
+
+  <!-- PPTXjs CSS (renders PPTX slides as HTML) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/nvd3@1.8.6/build/nv.d3.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/meshesha/PPTXjs@master/css/pptxjs.css">
+
   <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:40px;max-width:900px}
-    .card{border:1px solid #ddd;border-radius:12px;padding:20px}
+    :root { color-scheme: light; }
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:28px;max-width:980px;line-height:1.35}
+    h1{font-size:22px;margin:0 0 14px}
+    .card{border:1px solid #ddd;border-radius:14px;padding:16px}
     .row{margin:12px 0}
-    .muted{color:#555;font-size:14px;line-height:1.35}
-    .error{color:#b00020}
+    .muted{color:#555;font-size:13px}
+    .btn{padding:10px 14px;border:0;border-radius:12px;background:#111;color:#fff;cursor:pointer}
+    .btn:disabled{opacity:.6;cursor:not-allowed}
+    .btn2{padding:8px 10px;border:1px solid #bbb;border-radius:10px;background:#fff;cursor:pointer}
+    input[type=file], input[type=text]{width:100%}
+    input[type=text]{padding:10px;border:1px solid #ccc;border-radius:10px}
+
+    .drop{border:2px dashed #bbb;border-radius:14px;padding:14px;background:#fafafa}
+    .drop.dragover{border-color:#111;background:#f5f5f5}
+
+    .list{margin:10px 0 0;padding:0;list-style:none}
+    .item{display:flex;align-items:center;gap:10px;border:1px solid #e2e2e2;border-radius:12px;padding:10px;margin:8px 0;background:#fff}
+    .handle{cursor:grab;user-select:none;font-size:18px;line-height:1}
+    .name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .tag{font-size:12px;color:#333;border:1px solid #ddd;border-radius:999px;padding:2px 8px;background:#fafafa}
+
+    .status{font-size:13px;margin-top:10px}
     .ok{color:#0b6b0b}
-    input[type=text]{width:100%;padding:10px;border:1px solid #ccc;border-radius:8px}
-    input[type=file]{width:100%}
-    button{padding:10px 14px;border:0;border-radius:10px;background:#111;color:#fff;cursor:pointer}
-    button:disabled{opacity:.55;cursor:not-allowed}
-    ul{margin:8px 0 0 18px}
+    .err{color:#b00020}
+
+    /* Offscreen render stages (must be visible for html2canvas) */
+    .stage{position:fixed;left:-100000px;top:0;background:#fff}
+    .pageframe{overflow:hidden;background:#fff}
+
+    /* DOCX HTML styling */
+    .docx-root{font-family:Georgia, "Times New Roman", Times, serif; color:#111}
+    .docx-root img{max-width:100%;height:auto}
+    .docx-root table{border-collapse:collapse;max-width:100%}
+    .docx-root td, .docx-root th{border:1px solid #ddd;padding:6px;vertical-align:top}
   </style>
 </head>
 <body>
-  <h1>Merge PDFs, DOCX, and PPTX files into one PDF</h1>
+  <h1>Merge PDF, DOCX, PPTX files into one PDF</h1>
 
   <div class="card">
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% if messages %}
-        <div class="row">
-          {% for category, message in messages %}
-            <div class="{{ 'error' if category == 'error' else 'ok' }}">{{ message }}</div>
-          {% endfor %}
+    <div class="row">
+      <div class="drop" id="drop">
+        <div><strong>Add files</strong> (.pdf, .docx, .pptx)</div>
+        <div class="muted">Drag files here, or pick them below. You can reorder by dragging the handle.</div>
+        <div style="margin-top:10px">
+          <input id="fileInput" type="file" multiple accept=".pdf,.docx,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation" />
         </div>
-      {% endif %}
-    {% endwith %}
-
-    <form method="post" action="{{ url_for('merge') }}" enctype="multipart/form-data">
-      <div class="row">
-        <label for="files"><strong>Files</strong> (.pdf, .docx, .pptx)</label><br/>
-        <input id="files" name="files" type="file" multiple accept=".pdf,.docx" required />
-        <div class="muted">Tip: the merge order follows the upload order. If you want a specific order, select files in that order (or rename them 01_, 02_, etc.).</div>
       </div>
+
+      <ul class="list" id="fileList"></ul>
 
       <div class="row">
-        <label for="outname"><strong>Output filename</strong></label><br/>
-        <input id="outname" name="outname" type="text" value="merged.pdf" />
-        <div class="muted">"".pdf" will be added if you omit it.</div>
+        <label for="outName"><strong>Output filename</strong></label>
+        <input id="outName" type="text" value="merged.pdf" />
+        <div class="muted">The download is always a PDF.</div>
       </div>
 
-      <div class="row">
-        <button type="submit">Merge and download</button>
+      <div class="row" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button id="mergeBtn" class="btn">Merge and download</button>
+        <button id="clearBtn" class="btn2" type="button">Clear</button>
+        <span class="muted">PDF pages keep their original size. DOCX uses Letter pages. PPTX uses slide size.</span>
       </div>
 
-      <div class="row muted">
-        <div><strong>What happens to DOCX / PPTX files?</strong></div>
-        <ul>
-          <li>They are converted to PDF with LibreOffice in headless mode.</li>
-          <li>All PDFs are then merged into a single PDF.</li>
-        </ul>
-      </div>
-    </form>
+      <div class="status" id="status"></div>
+    </div>
   </div>
+
+  <!-- Dependencies for merging + rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+
+  <!-- JSZip v2 is required by PPTXjs; Mammoth works fine with this version too. -->
+  <script src="https://cdn.jsdelivr.net/npm/jszip@2.6.1/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip-utils@0.1.0/dist/jszip-utils.min.js"></script>
+
+  <!-- DOCX → HTML -->
+  <script src="https://cdn.jsdelivr.net/npm/mammoth@1.11.0/mammoth.browser.min.js"></script>
+
+  <!-- PPTX → HTML (PPTXjs) -->
+  <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3@3.5.17/d3.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/nvd3@1.8.6/build/nv.d3.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/meshesha/PPTXjs@master/js/filereader.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/meshesha/PPTXjs@master/js/pptxjs.js"></script>
+
+  <script>
+    const $ = window.jQuery;
+    const { PDFDocument } = window.PDFLib;
+
+    const els = {
+      drop: document.getElementById('drop'),
+      fileInput: document.getElementById('fileInput'),
+      fileList: document.getElementById('fileList'),
+      mergeBtn: document.getElementById('mergeBtn'),
+      clearBtn: document.getElementById('clearBtn'),
+      outName: document.getElementById('outName'),
+      status: document.getElementById('status'),
+    };
+
+    /** @type {File[]} */
+    let files = [];
+
+    function setStatus(msg, kind) {
+      els.status.className = 'status ' + (kind === 'err' ? 'err' : (kind === 'ok' ? 'ok' : ''));
+      els.status.textContent = msg || '';
+    }
+
+    function extOf(name) {
+      const i = (name || '').lastIndexOf('.');
+      return i >= 0 ? name.slice(i).toLowerCase() : '';
+    }
+
+    function safeOutName(name) {
+      const v = (name || 'merged.pdf').trim();
+      const base = v.length ? v : 'merged.pdf';
+      return base.toLowerCase().endsWith('.pdf') ? base : (base + '.pdf');
+    }
+
+    function addFiles(list) {
+      const incoming = Array.from(list || []);
+      for (const f of incoming) {
+        const e = extOf(f.name);
+        if (e !== '.pdf' && e !== '.docx' && e !== '.pptx') {
+          setStatus('Skipped unsupported file: ' + f.name, 'err');
+          continue;
+        }
+        files.push(f);
+      }
+      renderList();
+    }
+
+    function renderList() {
+      els.fileList.innerHTML = '';
+
+      if (!files.length) {
+        const li = document.createElement('li');
+        li.className = 'muted';
+        li.style.marginTop = '10px';
+        li.textContent = 'No files added.';
+        els.fileList.appendChild(li);
+        return;
+      }
+
+      files.forEach((f, idx) => {
+        const li = document.createElement('li');
+        li.className = 'item';
+        li.draggable = true;
+        li.dataset.index = String(idx);
+
+        const handle = document.createElement('div');
+        handle.className = 'handle';
+        handle.title = 'Drag to reorder';
+        handle.textContent = '⋮⋮';
+
+        const name = document.createElement('div');
+        name.className = 'name';
+        name.textContent = f.name;
+
+        const tag = document.createElement('div');
+        tag.className = 'tag';
+        tag.textContent = extOf(f.name).replace('.', '').toUpperCase();
+
+        const rm = document.createElement('button');
+        rm.className = 'btn2';
+        rm.type = 'button';
+        rm.textContent = 'Remove';
+        rm.onclick = () => {
+          files.splice(idx, 1);
+          renderList();
+        };
+
+        li.appendChild(handle);
+        li.appendChild(name);
+        li.appendChild(tag);
+        li.appendChild(rm);
+
+        wireDnD(li);
+        els.fileList.appendChild(li);
+      });
+    }
+
+    let dragFromIndex = null;
+    function wireDnD(li) {
+      li.addEventListener('dragstart', (e) => {
+        dragFromIndex = Number(li.dataset.index);
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', li.dataset.index);
+      });
+      li.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+      });
+      li.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const toIndex = Number(li.dataset.index);
+        const fromIndex = dragFromIndex;
+        dragFromIndex = null;
+        if (!Number.isFinite(fromIndex) || fromIndex === toIndex) return;
+
+        const moved = files.splice(fromIndex, 1)[0];
+        files.splice(toIndex, 0, moved);
+        renderList();
+      });
+    }
+
+    // Drag/drop into box
+    els.drop.addEventListener('dragover', (e) => { e.preventDefault(); els.drop.classList.add('dragover'); });
+    els.drop.addEventListener('dragleave', () => els.drop.classList.remove('dragover'));
+    els.drop.addEventListener('drop', (e) => {
+      e.preventDefault();
+      els.drop.classList.remove('dragover');
+      addFiles(e.dataTransfer.files);
+    });
+
+    els.fileInput.addEventListener('change', () => {
+      addFiles(els.fileInput.files);
+      els.fileInput.value = '';
+    });
+
+    els.clearBtn.addEventListener('click', () => {
+      files = [];
+      setStatus('', '');
+      renderList();
+    });
+
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    async function waitForImages(root) {
+      const imgs = Array.from(root.querySelectorAll('img'));
+      await Promise.all(imgs.map(img => {
+        if (img.complete) return Promise.resolve();
+        return new Promise(resolve => {
+          img.onload = () => resolve();
+          img.onerror = () => resolve();
+        });
+      }));
+    }
+
+    function pxToPt(px) { return px * 72 / 96; }
+    function ptToPx(pt) { return pt * 96 / 72; }
+
+    async function addPdfFileToMerged(merged, file) {
+      const ab = await file.arrayBuffer();
+      const src = await PDFDocument.load(ab);
+      const copied = await merged.copyPages(src, src.getPageIndices());
+      copied.forEach(p => merged.addPage(p));
+    }
+
+    async function addDocxFileToMerged(merged, file) {
+      const ab = await file.arrayBuffer();
+
+      const result = await mammoth.convertToHtml(
+        { arrayBuffer: ab },
+        {
+          // Helps preserve paragraphs and simple spacing.
+          styleMap: [
+            "p[style-name='Title'] => h1:fresh",
+            "p[style-name='Heading 1'] => h1:fresh",
+            "p[style-name='Heading 2'] => h2:fresh",
+            "p[style-name='Heading 3'] => h3:fresh"
+          ]
+        }
+      );
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'stage';
+
+      // Letter page sizes for DOCX
+      const pageWpt = 612; // 8.5in * 72
+      const pageHpt = 792; // 11in * 72
+      const marginPt = 48; // 0.66in
+      const pageWpx = Math.round(ptToPx(pageWpt));
+      const pageHpx = Math.round(ptToPx(pageHpt));
+      const marginPx = Math.round(ptToPx(marginPt));
+
+      const frame = document.createElement('div');
+      frame.className = 'pageframe';
+      frame.style.width = pageWpx + 'px';
+      frame.style.height = pageHpx + 'px';
+
+      const content = document.createElement('div');
+      content.className = 'docx-root';
+      content.style.boxSizing = 'border-box';
+      content.style.padding = marginPx + 'px';
+      content.style.width = pageWpx + 'px';
+      content.innerHTML = result.value;
+
+      wrapper.appendChild(frame);
+      document.body.appendChild(wrapper);
+
+      // Put the content inside the frame through a scroller that we translate.
+      const scroller = document.createElement('div');
+      scroller.style.width = pageWpx + 'px';
+      scroller.appendChild(content);
+      frame.appendChild(scroller);
+
+      await waitForImages(content);
+      await sleep(50);
+
+      // Measure full height after it is in the DOM.
+      const fullHeight = content.scrollHeight;
+      const usableHeight = pageHpx;
+      const pages = Math.max(1, Math.ceil(fullHeight / usableHeight));
+
+      for (let i = 0; i < pages; i++) {
+        const offset = i * usableHeight;
+        scroller.style.transform = `translateY(${-offset}px)`;
+        await sleep(20);
+
+        const canvas = await html2canvas(frame, {
+          backgroundColor: '#ffffff',
+          scale: 2,
+          useCORS: true,
+          logging: false
+        });
+
+        const png = canvas.toDataURL('image/png');
+        const img = await merged.embedPng(png);
+        const page = merged.addPage([pageWpt, pageHpt]);
+        page.drawImage(img, { x: 0, y: 0, width: pageWpt, height: pageHpt });
+      }
+
+      wrapper.remove();
+
+      if (result.messages && result.messages.length) {
+        // Show warnings without failing the merge.
+        console.log('Mammoth messages:', result.messages);
+      }
+    }
+
+    async function renderPptxSlides(container, file) {
+      // Attempt 1: feed through a hidden file input (works when file.type is present)
+      async function attemptWithInput() {
+        container.innerHTML = '';
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.style.display = 'none';
+        input.id = 'pptx_input_' + Math.random().toString(16).slice(2);
+        document.body.appendChild(input);
+
+        $(container).pptxToHtml({
+          fileInputId: input.id,
+          slidesScale: '100%',
+          slideMode: false,
+          keyBoardShortCut: false,
+          mediaProcess: false,
+          themeProcess: true,
+        });
+
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        input.files = dt.files;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+
+        const slides = await waitForSlides(container, 120000);
+        input.remove();
+        return slides;
+      }
+
+      // Attempt 2: use a blob URL via pptxFileUrl (avoids MIME checks)
+      async function attemptWithBlobUrl() {
+        container.innerHTML = '';
+        const url = URL.createObjectURL(file);
+        try {
+          $(container).pptxToHtml({
+            pptxFileUrl: url,
+            slidesScale: '100%',
+            slideMode: false,
+            keyBoardShortCut: false,
+            mediaProcess: false,
+            themeProcess: true,
+          });
+          const slides = await waitForSlides(container, 120000);
+          return slides;
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      }
+
+      try {
+        return await attemptWithInput();
+      } catch (e) {
+        return await attemptWithBlobUrl();
+      }
+    }
+
+    async function waitForSlides(container, timeoutMs) {
+      const started = Date.now();
+      while (Date.now() - started < timeoutMs) {
+        const slides = container.querySelectorAll('.slide');
+        const loading = container.querySelector('.slides-loadnig-msg');
+        if (slides.length > 0 && !loading) {
+          return Array.from(slides);
+        }
+        await sleep(80);
+      }
+      throw new Error('PPTX rendering timed out.');
+    }
+
+    async function addPptxFileToMerged(merged, file) {
+      const stage = document.createElement('div');
+      stage.className = 'stage';
+      stage.style.width = '2000px';
+      document.body.appendChild(stage);
+
+      const slides = await renderPptxSlides(stage, file);
+
+      // Ensure images are ready
+      for (const s of slides) {
+        await waitForImages(s);
+      }
+      await sleep(50);
+
+      for (const slide of slides) {
+        const rect = slide.getBoundingClientRect();
+        const wpx = Math.max(1, Math.round(rect.width));
+        const hpx = Math.max(1, Math.round(rect.height));
+        const wpt = pxToPt(wpx);
+        const hpt = pxToPt(hpx);
+
+        const canvas = await html2canvas(slide, {
+          backgroundColor: '#ffffff',
+          scale: 2,
+          useCORS: true,
+          logging: false
+        });
+
+        const png = canvas.toDataURL('image/png');
+        const img = await merged.embedPng(png);
+        const page = merged.addPage([wpt, hpt]);
+        page.drawImage(img, { x: 0, y: 0, width: wpt, height: hpt });
+      }
+
+      stage.remove();
+    }
+
+    async function mergeAll() {
+      setStatus('', '');
+      if (!files.length) {
+        setStatus('Add at least one file first.', 'err');
+        return;
+      }
+
+      els.mergeBtn.disabled = true;
+      els.clearBtn.disabled = true;
+
+      try {
+        const merged = await PDFDocument.create();
+
+        for (let i = 0; i < files.length; i++) {
+          const f = files[i];
+          const e = extOf(f.name);
+
+          setStatus(`Working on ${i + 1} of ${files.length}: ${f.name}`, '');
+
+          if (e === '.pdf') {
+            await addPdfFileToMerged(merged, f);
+          } else if (e === '.docx') {
+            await addDocxFileToMerged(merged, f);
+          } else if (e === '.pptx') {
+            await addPptxFileToMerged(merged, f);
+          } else {
+            throw new Error('Unsupported file type: ' + f.name);
+          }
+        }
+
+        const outBytes = await merged.save();
+        const blob = new Blob([outBytes], { type: 'application/pdf' });
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = safeOutName(els.outName.value);
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+
+        setStatus('Download started.', 'ok');
+        setTimeout(() => URL.revokeObjectURL(url), 15000);
+      } catch (err) {
+        console.error(err);
+        setStatus(String(err && err.message ? err.message : err), 'err');
+      } finally {
+        els.mergeBtn.disabled = false;
+        els.clearBtn.disabled = false;
+      }
+    }
+
+    els.mergeBtn.addEventListener('click', mergeAll);
+    renderList();
+  </script>
 </body>
 </html>
-"""
-
-
-def _safe_filename(name: str) -> str:
-    name = (name or "merged.pdf").strip()
-    name = re.sub(r"[^A-Za-z0-9._ -]+", "_", name)
-    if not name.lower().endswith(".pdf"):
-        name += ".pdf"
-    # Avoid empty / weird
-    return name if name not in {".pdf", ""} else "merged.pdf"
-
-
-def _soffice_convert_to_pdf(in_path: Path, out_dir: Path) -> Path:
-    """Convert a DOCX or PPTX to PDF using LibreOffice (soffice)."""
-    cmd = [
-        "soffice",
-        "--headless",
-        "--nologo",
-        "--nolockcheck",
-        "--nodefault",
-        "--norestore",
-        "--convert-to",
-        "pdf",
-        "--outdir",
-        str(out_dir),
-        str(in_path),
-    ]
-
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    if proc.returncode != 0:
-        raise RuntimeError(f"LibreOffice conversion failed for {in_path.name}. Output:
-{proc.stdout}")
-
-    pdf_path = out_dir / (in_path.stem + ".pdf")
-    if not pdf_path.exists():
-        # LibreOffice sometimes changes capitalization or uses slightly different naming.
-        # Fall back to the newest PDF in out_dir.
-        pdfs = sorted(out_dir.glob("*.pdf"), key=lambda p: p.stat().st_mtime, reverse=True)
-        if not pdfs:
-            raise RuntimeError(f"LibreOffice reported success but produced no PDF for {in_path.name}.")
-        pdf_path = pdfs[0]
-
-    return pdf_path
-
-
-def _merge_pdfs(pdf_paths: list[Path], out_pdf: Path) -> None:
-    writer = PdfWriter()
-
-    for p in pdf_paths:
-        reader = PdfReader(str(p))
-        for page in reader.pages:
-            writer.add_page(page)
-
-    with out_pdf.open("wb") as f:
-        writer.write(f)
-
-
-@APP.get("/")
-def index() -> str:
-    return render_template_string(HTML)
-
-
-@APP.post("/merge")
-def merge() -> Response:
-    files = request.files.getlist("files")
-    if not files:
-        flash("Please upload at least one file.", "error")
-        return redirect(url_for("index"))
-
-        outname = _safe_filename(request.form.get("outname", "merged.pdf"))
-
-    # Work in an isolated temp directory and clean up after.
-    with tempfile.TemporaryDirectory(prefix="merge_upload_") as td:
-        td_path = Path(td)
-        in_dir = td_path / "in"
-        conv_dir = td_path / "converted"
-        in_dir.mkdir(parents=True, exist_ok=True)
-        conv_dir.mkdir(parents=True, exist_ok=True)
-
-        pdfs_to_merge: list[Path] = []
-
-        for idx, storage in enumerate(files, start=1):
-            orig_name = storage.filename or f"file_{idx}"
-            ext = Path(orig_name).suffix.lower()
-
-            if ext not in ALLOWED_EXTS:
-                flash(f"Unsupported file type: {orig_name}. Allowed: PDF, DOCX.", "error")
-                return redirect(url_for("index"))
-
-            # Save with an index prefix to preserve ordering and avoid collisions.
-            safe_base = re.sub(r"[^A-Za-z0-9._ -]+", "_", Path(orig_name).stem) or f"file_{idx}"
-            saved_path = in_dir / f"{idx:02d}_{safe_base}{ext}"
-            storage.save(saved_path)
-
-            if ext == ".pdf":
-                pdfs_to_merge.append(saved_path)
-            else:
-                # DOCX/PPTX -> PDF
-                pdf_path = _soffice_convert_to_pdf(saved_path, conv_dir)
-                # Copy into a stable name so merge order is obvious.
-                stable_pdf = conv_dir / f"{idx:02d}_{safe_base}.pdf"
-                shutil.copyfile(pdf_path, stable_pdf)
-                pdfs_to_merge.append(stable_pdf)
-
-        out_pdf = td_path / "merged.pdf"
-        _merge_pdfs(pdfs_to_merge, out_pdf)
-
-        # Stream back to the user.
-        return send_file(
-            out_pdf,
-            as_attachment=True,
-            download_name=outname,
-            mimetype="application/pdf",
-        )
-
-
-if __name__ == "__main__":
-    # Set host="0.0.0.0" if you want LAN access.
-    APP.run(host="127.0.0.1", port=int(os.environ.get("PORT", "5000")), debug=True)
