@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Merge PDF, DOCX, PPTX → one PDF</title>
+  <title>Merge PDF, DOCX, PPTX, HTML → one PDF</title>
 
   <!-- PPTXjs CSS (renders PPTX slides as HTML) -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/nvd3@1.8.6/build/nv.d3.min.css">
@@ -44,18 +44,24 @@
     .docx-root img{max-width:100%;height:auto}
     .docx-root table{border-collapse:collapse;max-width:100%}
     .docx-root td, .docx-root th{border:1px solid #ddd;padding:6px;vertical-align:top}
+
+    /* Uploaded HTML styling */
+    .html-root{color:#111;background:#fff}
+    .html-root img{max-width:100%;height:auto}
+    .html-root table{border-collapse:collapse;max-width:100%}
+    .html-root iframe,.html-root video,.html-root audio,.html-root canvas,.html-root svg{max-width:100%}
   </style>
 </head>
 <body>
-  <h1>Merge PDF, DOCX, PPTX files into one PDF</h1>
+  <h1>Merge PDF, DOCX, PPTX, and HTML files into one PDF</h1>
 
   <div class="card">
     <div class="row">
       <div class="drop" id="drop">
-        <div><strong>Add files</strong> (.pdf, .docx, .pptx)</div>
+        <div><strong>Add files</strong> (.pdf, .docx, .pptx, .html)</div>
         <div class="muted">Drag files here, or pick them below. You can reorder by dragging the handle.</div>
         <div style="margin-top:10px">
-          <input id="fileInput" type="file" multiple accept=".pdf,.docx,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation" />
+          <input id="fileInput" type="file" multiple accept=".pdf,.docx,.pptx,.html,.htm,text/html,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation" />
         </div>
       </div>
 
@@ -70,7 +76,7 @@
       <div class="row" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <button id="mergeBtn" class="btn">Merge and download</button>
         <button id="clearBtn" class="btn2" type="button">Clear</button>
-        <span class="muted">PDF pages keep their original size. DOCX uses Letter pages. PPTX uses slide size.</span>
+        <span class="muted">PDF pages keep their original size. DOCX and HTML use Letter pages by default. PPTX uses slide size.</span>
       </div>
 
       <div class="status" id="status"></div>
@@ -132,7 +138,7 @@
       const incoming = Array.from(list || []);
       for (const f of incoming) {
         const e = extOf(f.name);
-        if (e !== '.pdf' && e !== '.docx' && e !== '.pptx') {
+        if (e !== '.pdf' && e !== '.docx' && e !== '.pptx' && e !== '.html' && e !== '.htm') {
           setStatus('Skipped unsupported file: ' + f.name, 'err');
           continue;
         }
@@ -248,6 +254,21 @@
       }));
     }
 
+    async function waitForStyles(root) {
+      const links = Array.from(root.querySelectorAll('link[rel="stylesheet"]'));
+      await Promise.all(links.map(link => new Promise(resolve => {
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          resolve();
+        };
+        link.addEventListener('load', finish, { once: true });
+        link.addEventListener('error', finish, { once: true });
+        setTimeout(finish, 3000);
+      })));
+    }
+
     function pxToPt(px) { return px * 72 / 96; }
     function ptToPx(pt) { return pt * 96 / 72; }
 
@@ -338,6 +359,125 @@
         // Show warnings without failing the merge.
         console.log('Mammoth messages:', result.messages);
       }
+    }
+
+    function sanitizeHtmlForRender(rawHtml) {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(rawHtml, 'text/html');
+
+      doc.querySelectorAll('script').forEach(el => el.remove());
+      doc.querySelectorAll('base').forEach(el => el.remove());
+
+      const all = doc.querySelectorAll('*');
+      for (const el of all) {
+        for (const attr of Array.from(el.attributes)) {
+          const name = attr.name.toLowerCase();
+          const value = String(attr.value || '');
+
+          if (name.startsWith('on')) {
+            el.removeAttribute(attr.name);
+            continue;
+          }
+
+          if ((name === 'src' || name === 'href' || name === 'xlink:href') && /^javascript:/i.test(value.trim())) {
+            el.removeAttribute(attr.name);
+          }
+        }
+      }
+
+      return '<!doctype html>\n' + doc.documentElement.outerHTML;
+    }
+
+    async function addHtmlFileToMerged(merged, file) {
+      const raw = await file.text();
+      const safeHtml = sanitizeHtmlForRender(raw);
+
+      const parsed = new DOMParser().parseFromString(safeHtml, 'text/html');
+      const title = parsed.querySelector('title')?.textContent || file.name;
+      const headNodes = Array.from(parsed.head ? parsed.head.childNodes : []);
+      const bodyNodes = Array.from(parsed.body ? parsed.body.childNodes : []);
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'stage';
+
+      const pageWpt = 612;
+      const pageHpt = 792;
+      const marginPt = 36;
+      const pageWpx = Math.round(ptToPx(pageWpt));
+      const pageHpx = Math.round(ptToPx(pageHpt));
+      const marginPx = Math.round(ptToPx(marginPt));
+
+      const frame = document.createElement('div');
+      frame.className = 'pageframe';
+      frame.style.width = pageWpx + 'px';
+      frame.style.height = pageHpx + 'px';
+      frame.style.background = '#fff';
+
+      const htmlHost = document.createElement('div');
+      htmlHost.className = 'html-root';
+      htmlHost.style.boxSizing = 'border-box';
+      htmlHost.style.width = pageWpx + 'px';
+      htmlHost.style.padding = marginPx + 'px';
+      htmlHost.style.background = '#fff';
+      htmlHost.style.overflowWrap = 'break-word';
+
+      const scopedTitle = document.createElement('div');
+      scopedTitle.style.display = 'none';
+      scopedTitle.textContent = title;
+      htmlHost.appendChild(scopedTitle);
+
+      for (const node of headNodes) {
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        const el = node.cloneNode(true);
+        const tag = el.tagName.toLowerCase();
+        if (tag === 'style' || (tag === 'link' && String(el.getAttribute('rel') || '').toLowerCase() === 'stylesheet')) {
+          htmlHost.appendChild(el);
+        }
+      }
+
+      const bodyWrapper = document.createElement('div');
+      for (const node of bodyNodes) {
+        bodyWrapper.appendChild(node.cloneNode(true));
+      }
+      htmlHost.appendChild(bodyWrapper);
+
+      wrapper.appendChild(frame);
+      document.body.appendChild(wrapper);
+
+      const scroller = document.createElement('div');
+      scroller.style.width = pageWpx + 'px';
+      scroller.appendChild(htmlHost);
+      frame.appendChild(scroller);
+
+      await waitForStyles(htmlHost);
+      await waitForImages(htmlHost);
+      await sleep(120);
+
+      const fullHeight = Math.max(htmlHost.scrollHeight, bodyWrapper.scrollHeight, pageHpx);
+      const usableHeight = pageHpx;
+      const pages = Math.max(1, Math.ceil(fullHeight / usableHeight));
+
+      for (let i = 0; i < pages; i++) {
+        const offset = i * usableHeight;
+        scroller.style.transform = `translateY(${-offset}px)`;
+        await sleep(20);
+
+        const canvas = await html2canvas(frame, {
+          backgroundColor: '#ffffff',
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          windowWidth: pageWpx,
+          windowHeight: fullHeight
+        });
+
+        const png = canvas.toDataURL('image/png');
+        const img = await merged.embedPng(png);
+        const page = merged.addPage([pageWpt, pageHpt]);
+        page.drawImage(img, { x: 0, y: 0, width: pageWpt, height: pageHpt });
+      }
+
+      wrapper.remove();
     }
 
     async function renderPptxSlides(container, file) {
@@ -471,6 +611,8 @@
             await addDocxFileToMerged(merged, f);
           } else if (e === '.pptx') {
             await addPptxFileToMerged(merged, f);
+          } else if (e === '.html' || e === '.htm') {
+            await addHtmlFileToMerged(merged, f);
           } else {
             throw new Error('Unsupported file type: ' + f.name);
           }
